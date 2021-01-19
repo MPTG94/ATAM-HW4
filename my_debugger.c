@@ -38,7 +38,7 @@ pid_t run_target(const char *programname, const char *args) {
             exit(1);
         }
         /* Replace this process's image with the given program */
-        printf("Running the program %s with args %s\n", programname, args);
+//        printf("Running the program %s with args %s\n", programname, args);
         execl(programname, args, NULL);
 
     } else {
@@ -48,16 +48,15 @@ pid_t run_target(const char *programname, const char *args) {
     }
 }
 
-void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi, char *outFile) {
+void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi, int outputFile) {
     int wait_status;
     struct user_regs_struct regs;
     struct user_regs_struct old_regs;
-    int outputFile = open(outFile, O_CREAT | O_WRONLY | O_TRUNC, 0644);
     /* Wait for child to stop on its first instruction */
     wait(&wait_status);
     ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
     while (regs.rip != addr) {
-        ptrace(PTRACE_SINGLESTEP, child_pid, NULL, NULL);
+        ptrace(PTRACE_SINGLESTEP, child_pid, 0, 0);
         // Wait for child to stop on it's next instruction
         wait(&wait_status);
         // Get regs again so we have updated rip
@@ -65,103 +64,98 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
     }
     // We reached the address we want to start redirecting output from
     unsigned long rspAtCallStart = regs.rsp;
-    unsigned long retAddressAfterSyscalls = ptrace(PTRACE_PEEKDATA, child_pid, (void*) rspAtCallStart, NULL);
+    unsigned long retAddressAfterSyscalls = ptrace(PTRACE_PEEKDATA, child_pid, (void *) rspAtCallStart, 0);
 
-    unsigned long data = ptrace(PTRACE_PEEKTEXT, child_pid, (void *) retAddressAfterSyscalls, NULL);
-    printf("DBG: Original data at 0x%x: 0x%x\n", retAddressAfterSyscalls, data);
+    unsigned long data = ptrace(PTRACE_PEEKTEXT, child_pid, (void *) retAddressAfterSyscalls, 0);
+//    printf("DBG: Original data at 0x%x: 0x%x\n", retAddressAfterSyscalls, data);
 
     /* Write the trap instruction 'int 3' into the address */
     unsigned long data_trap = (data & 0xFFFFFF00) | 0xCC;
     ptrace(PTRACE_POKETEXT, child_pid, (void *) retAddressAfterSyscalls, (void *) data_trap);
-    ptrace(PTRACE_SYSCALL, child_pid, NULL, NULL);
-    wait(&wait_status);
-    ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+    unsigned long test1 = ptrace(PTRACE_PEEKDATA, child_pid, (void *) retAddressAfterSyscalls, 0);
+//    printf("DBG: Modified data at 0x%x: 0x%x\n", retAddressAfterSyscalls, test1);
+
+//    printf("rip where we put the breakpoint is: %llx\n", retAddressAfterSyscalls);
+    retAddressAfterSyscalls += 1;
+//    printf("the rip register when the program hits the breakpoint should be: %llx\n", retAddressAfterSyscalls);
+    unsigned long long oldRDI;
     unsigned long long oldRAX;
-    //TODO: check if rax = 1, to avoid modifying syscalls that aren't WRITE
-    printf("lallalarip is: %llx\n", retAddressAfterSyscalls);
-    int counter = 0;
-    while (regs.rip != retAddressAfterSyscalls+1 && counter < 10) {
-        // manipulate syscall (redirect/copy)
-        counter++;
-        printf("rip is: %llx\n", regs.rip);
-        oldRAX = regs.orig_rax;
-//        regs.rdi = outputFile;
-        ptrace(PTRACE_SETREGS, child_pid, NULL, &regs);
-        ptrace(PTRACE_SYSCALL, child_pid, NULL, NULL);
-        wait(&wait_status);
-        ptrace(PTRACE_GETREGS, child_pid, NULL, &regs);
-        // change program to call syscall again (normal)
-
-        // listen for next syscall
-    }
-
-    ptrace(PTRACE_CONT, child_pid, NULL, NULL);
+    // Break before entry to syscall
+    ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
     wait(&wait_status);
+    // Get regs before syscall
     ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
-    unsigned long test = ptrace(PTRACE_PEEKTEXT, child_pid, (void *) regs.rip, NULL);
-    printf("DBG: data at 0x%x: 0x%x\n", regs.rip, test);
-    ptrace(PTRACE_POKETEXT, child_pid, (void *) retAddressAfterSyscalls, (void *) data);
-    regs.rip -= 1;
-    ptrace(PTRACE_SETREGS, child_pid, NULL, &regs);
-    /* The child can continue running now */
-    ptrace(PTRACE_CONT, child_pid, NULL, NULL);
-    /* Enter next system call */
-//    regs.rdx = 5;
-//    ptrace(PTRACE_SETREGS, child_pid, NULL, &regs);
-//
-//    ptrace(PTRACE_SYSCALL, child_pid, NULL, NULL);
-//    wait(&wait_status);
-//    while (regs.rip != endRIP) {
-//        ptrace(PTRACE_SINGLESTEP, child_pid, NULL, NULL);
-//        // Wait for child to stop on it's next instruction
-//        wait(&wait_status);
-//        // Get regs again so we have updated rip
-//        old_regs = regs;
-//        ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+    int counter = 0;
+
+//    while(should_keep_debugging_set_func) {
+//        WHILE_FUNC_LOOP();
+//        CHKCK_SHOULD_KEEP_AND_ADD_BREAKPOINT();
 //    }
+    while (regs.rip != retAddressAfterSyscalls) {
+        if (regs.orig_rax == 1) {
+            write(outputFile, "PRF:: ", 6);
+            old_regs = regs;
+            // manipulate syscall (redirect/copy)
+            regs.rdi = outputFile;
+            ptrace(PTRACE_SETREGS, child_pid, 0, &regs);
+            ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
+            // First write to file has ended
+            wait(&wait_status);
+            if (copyOrRedi == 1) {
+                // should also print to screen
+                ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+                regs.rip -= 2;
+                regs.rdi = old_regs.rdi;
+//                regs.orig_rax = 1;
+                regs.rax = 1;
+                ptrace(PTRACE_SETREGS, child_pid, 0, &regs);
+                ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
+                wait(&wait_status);
+                ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+                ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
+                wait(&wait_status);
+                ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+                ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
+                wait(&wait_status);
+                ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+            } else {
+                ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
+                wait(&wait_status);
+                ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+            }
+        } else {
+            // this is not a syscall we need to handle
+            ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
+            // execute syscall
+            wait(&wait_status);
+            ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
+            // run until next syscall is hit
+            wait(&wait_status);
+            ptrace(PTRACE_GETREGS, child_pid, NULL, &regs);
+        }
+    }
 
-//    unsigned long data = ptrace(PTRACE_PEEKTEXT, child_pid, (void *) addr, NULL);
-//    printf("DBG: Original data at 0x%x: 0x%x\n", addr, data);
-//
-//    /* Write the trap instruction 'int 3' into the address */
-//    unsigned long data_trap = (data & 0xFFFFFF00) | 0xCC;
-//    ptrace(PTRACE_POKETEXT, child_pid, (void *) addr, (void *) data_trap);
-
-    /* Let the child run to the breakpoint and wait for it to reach it */
-//    ptrace(PTRACE_CONT, child_pid, NULL, NULL);
-//
-//    wait(&wait_status);
-//    /* See where the child is now */
-//    // TODO: insert while loop for syscalls here
-//    ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
-//    printf("DBG: Child stopped at RIP = 0x%x\n", regs.rip);
-//
-//    /* Remove the breakpoint by restoring the previous data and set rdx = 5 */
-//    ptrace(PTRACE_POKETEXT, child_pid, (void *) addr, (void *) data);
-//    regs.rip -= 1;
-//    regs.rdx = 5;
-//    ptrace(PTRACE_SETREGS, child_pid, 0, &regs);
-//
-//    /* The child can continue running now */
-//    ptrace(PTRACE_CONT, child_pid, 0, 0);
+    // If we exit the loop, that menas the RIP has reached out breakpoint
+    // need to fix the instruction to the old one
+    ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+    unsigned long fixAddr = retAddressAfterSyscalls - 1;
+    unsigned long test = ptrace(PTRACE_PEEKTEXT, child_pid, (void *) fixAddr, 0);
+//    printf("DBG: data at 0x%x: 0x%x\n", regs.rip, test);
+    ptrace(PTRACE_POKETEXT, child_pid, (void *) fixAddr, (void *) data);
+    regs.rip -= 1;
+    ptrace(PTRACE_SETREGS, child_pid, 0, &regs);
+    /* The child can continue running now */
+    ptrace(PTRACE_CONT, child_pid, 0, 0);
 
     wait(&wait_status);
-    if (WIFEXITED(wait_status)) {
-        printf("DBG: Child exited\n");
-    } else {
-        printf("DBG: Unexpected signal\n");
-    }
+//    if (WIFEXITED(wait_status)) {
+//        printf("DBG: Child exited\n");
+//    } else {
+//        printf("DBG: Unexpected signal\n");
+//    }
     close(outputFile);
 }
 
-// we want to:
-// 1. create a file descriptor to write the output to
-// 2. begin parsing the executed program, until we reach the specified start address
-// 3. set flags and destination regs accordingly
-// 4. set ptrace to only break on syscalls
-// 5. modify first syscall to output to our file
-// 6. make program repeat that syscall again, without our intervention
-// 7. when we reach the end of our debugged function, just stop debugging
 void run_syscall_debugger(pid_t child_pid) {
     int wait_status;
 
@@ -293,14 +287,12 @@ int main(int argc, char **argv) {
     }
     strcat(args, argv[argc - 1]);
 
+    int outputFile = open(outFile, O_CREAT | O_WRONLY | O_TRUNC | O_APPEND, 0644);
 //    printf("%s\n", args);
 
     child_pid = run_target(argv[4], args);
 
     // run specific "debugger"
-//    int outputFile = open(outFile, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-//    int sz = write(outputFile, "bla\n", strlen("bla\n"));
-    run_breakpoint_debugger(child_pid, addr, copyOrRedi, outFile);
-//    run_counter_debugger(child_pid);
+    run_breakpoint_debugger(child_pid, addr, copyOrRedi, outputFile);
     return 0;
 }
