@@ -91,11 +91,16 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
             wait(&wait_status);
             // Get regs before syscall
             ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+//            if (regs.rax == regs.rdx) {
+//                // need to break rax for syscall printing to work
+//                regs.rax = old_regs.rax;
+//            }
             if (regs.orig_rax == 1) {
                 write(outputFile, "PRF:: ", 6);
                 old_regs = regs;
                 // manipulate syscall (redirect/copy)
                 regs.rdi = outputFile;
+//                regs.rax = 5555555555555;
                 ptrace(PTRACE_SETREGS, child_pid, 0, &regs);
                 ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
                 wait(&wait_status);
