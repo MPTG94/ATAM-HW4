@@ -76,7 +76,7 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
         unsigned long retAddressAfterSyscalls = ptrace(PTRACE_PEEKDATA, child_pid, (void *) rspAtCallStart, 0);
 
         unsigned long data = ptrace(PTRACE_PEEKTEXT, child_pid, (void *) retAddressAfterSyscalls, 0);
-//    printf("DBG: Original data at 0x%x: 0x%x\n", retAddressAfterSyscalls, data);
+        //printf("DBG: Original data at 0x%x: 0x%x\n", retAddressAfterSyscalls, data);
 
         /* Write the trap instruction 'int 3' into the address */
         unsigned long data_trap = (data & 0xFFFFFF00) | 0xCC;
@@ -91,16 +91,16 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
             wait(&wait_status);
             // Get regs before syscall
             ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
-//            if (regs.rax == regs.rdx) {
-//                // need to break rax for syscall printing to work
-//                regs.rax = old_regs.rax;
-//            }
+
+            if (regs.rip == retAddressAfterSyscalls) {
+                break;
+            }
+
             if (regs.orig_rax == 1) {
                 write(outputFile, "PRF:: ", 6);
                 old_regs = regs;
                 // manipulate syscall (redirect/copy)
                 regs.rdi = outputFile;
-//                regs.rax = 5555555555555;
                 ptrace(PTRACE_SETREGS, child_pid, 0, &regs);
                 ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
                 wait(&wait_status);
@@ -111,6 +111,8 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
                     regs.rip -= 2;
                     regs.rdi = old_regs.rdi;
                     regs.rax = 1;
+//                    regs = old_regs;
+//                    regs.rip -= 2;
                     ptrace(PTRACE_SETREGS, child_pid, 0, &regs);
                     ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
                     wait(&wait_status);
@@ -118,13 +120,9 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
                     ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
                     wait(&wait_status);
                     ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
-                    ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
-                    wait(&wait_status);
-                    ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
                 } else {
-                    ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
-                    wait(&wait_status);
-                    ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+                    regs = old_regs;
+                    ptrace(PTRACE_SETREGS, child_pid, 0, &regs);
                 }
             } else {
                 // this is not a syscall we need to handle
@@ -135,6 +133,10 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
                 // run until next syscall is hit
                 wait(&wait_status);
                 ptrace(PTRACE_GETREGS, child_pid, NULL, &regs);
+            }
+
+            if (regs.rip == retAddressAfterSyscalls) {
+                break;
             }
         }
         // If we exit the loop, that means the RIP has reached out breakpoint
@@ -182,6 +184,9 @@ int main(int argc, char **argv) {
     strcat(args, argv[argc - 1]);
 
     int outputFile = open(outFile, O_CREAT | O_WRONLY | O_TRUNC | O_APPEND, 0644);
+    if (outputFile < 0) {
+        exit(1);
+    }
 //    printf("%s\n", args);
 
     child_pid = run_target(argv[4], args);
@@ -189,6 +194,9 @@ int main(int argc, char **argv) {
     // run specific "debugger"
     run_breakpoint_debugger(child_pid, addr, copyOrRedi, outputFile);
 
-    close(outputFile);
+    if (close(outputFile) < 0) {
+        exit(1);
+    }
+
     return 0;
 }
