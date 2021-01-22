@@ -183,7 +183,7 @@ int main(int argc, char **argv) {
     }
     strcat(args, argv[argc - 1]);
 
-    int outputFile = open(outFile, O_CREAT | O_WRONLY | O_TRUNC | O_APPEND, 0644);
+    int outputFile = open(outFile, O_CREAT | O_WRONLY | O_TRUNC , 0644);
     if (outputFile < 0) {
         exit(1);
     }
