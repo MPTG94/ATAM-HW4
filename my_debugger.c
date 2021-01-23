@@ -156,6 +156,9 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
                 break;
             }
         }
+        if (WIFEXITED(wait_status)) {
+            break;
+        }
         // If we exit the loop, that means the RIP has reached out breakpoint
         // need to fix the instruction to the old one
         ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
@@ -167,9 +170,15 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
         ptrace(PTRACE_SETREGS, child_pid, 0, &regs);
         /* The child can continue running now */
 //    ptrace(PTRACE_CONT, child_pid, 0, 0);
-        ptrace(PTRACE_SINGLESTEP, child_pid, 0, 0);
+        if (ptrace(PTRACE_SINGLESTEP, child_pid, 0, 0) < 0) {
+            exit(1);
+        }
 
         wait(&wait_status);
+
+        if (WIFEXITED(wait_status)) {
+            break;
+        }
     }
 }
 
