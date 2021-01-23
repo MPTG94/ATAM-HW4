@@ -74,14 +74,23 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
     wait(&wait_status);
     while (WIFSTOPPED(wait_status)) {
         // Loop will run until the child process has exited
-        ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+        if (ptrace(PTRACE_GETREGS, child_pid, NULL, &regs) < 0) {
+            exit(1);
+        }
         while (WIFSTOPPED(wait_status) && regs.rip != addr) {
             // Loop will run until the child process has reached the function address to debug from
-            ptrace(PTRACE_SINGLESTEP, child_pid, 0, 0);
+            if (ptrace(PTRACE_SINGLESTEP, child_pid, 0, 0) < 0) {
+                exit(1);
+            }
             // Wait for child to stop on it's next instruction
             wait(&wait_status);
+            if (WIFEXITED(wait_status)) {
+                break;
+            }
             // Get regs again so we have updated rip
-            ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+            if (ptrace(PTRACE_GETREGS, child_pid, NULL, &regs) < 0) {
+                exit(1);
+            }
         }
 
         if (regs.rip != addr) {
@@ -104,10 +113,14 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
 
         while (WIFSTOPPED(wait_status) && regs.rip != retAddressAfterSyscalls) {
             // Break before entry to syscall
-            ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
+            if (ptrace(PTRACE_SYSCALL, child_pid, 0, 0) < 0) {
+                exit(1);
+            }
             wait(&wait_status);
             // Get regs before syscall
-            ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+            if (ptrace(PTRACE_GETREGS, child_pid, NULL, &regs) < 0) {
+                exit(1);
+            }
 
             if (regs.rip == retAddressAfterSyscalls) {
                 break;
@@ -118,38 +131,68 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
                 old_regs = regs;
                 // manipulate syscall (redirect/copy)
                 regs.rdi = outputFile;
-                ptrace(PTRACE_SETREGS, child_pid, 0, &regs);
-                ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
+                if (ptrace(PTRACE_SETREGS, child_pid, 0, &regs) < 0) {
+                    exit(1);
+                }
+                if (ptrace(PTRACE_SYSCALL, child_pid, 0, 0) < 0) {
+                    exit(1);
+                }
                 wait(&wait_status);
                 // First write (to file) has ended
                 if (copyOrRedi == 1) {
                     // should also print to screen
-                    ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+                    if (ptrace(PTRACE_GETREGS, child_pid, NULL, &regs) < 0) {
+                        exit(1);
+                    }
                     regs.rip -= 2;
                     regs.rdi = old_regs.rdi;
                     regs.rax = 1;
 //                    regs = old_regs;
 //                    regs.rip -= 2;
-                    ptrace(PTRACE_SETREGS, child_pid, 0, &regs);
-                    ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
+                    if (ptrace(PTRACE_SETREGS, child_pid, 0, &regs) < 0) {
+                        exit(1);
+                    }
+                    if (ptrace(PTRACE_SYSCALL, child_pid, 0, 0) < 0) {
+                        exit(1);
+                    }
                     wait(&wait_status);
-                    ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
-                    ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
+                    if (ptrace(PTRACE_GETREGS, child_pid, NULL, &regs) < 0) {
+                        exit(1);
+                    }
+                    if (ptrace(PTRACE_SYSCALL, child_pid, 0, 0) < 0) {
+                        exit(1);
+                    }
                     wait(&wait_status);
-                    ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+                    if (ptrace(PTRACE_GETREGS, child_pid, NULL, &regs) < 0) {
+                        exit(1);
+                    }
                 } else {
                     regs = old_regs;
-                    ptrace(PTRACE_SETREGS, child_pid, 0, &regs);
+                    if (ptrace(PTRACE_SETREGS, child_pid, 0, &regs) < 0) {
+                        exit(1);
+                    }
                 }
             } else {
                 // this is not a syscall we need to handle
-                ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
+                if (ptrace(PTRACE_SYSCALL, child_pid, 0, 0) < 0) {
+                    exit(1);
+                }
                 // execute syscall
                 wait(&wait_status);
-                ptrace(PTRACE_SYSCALL, child_pid, 0, 0);
+                if (WIFEXITED(wait_status)) {
+                    break;
+                }
+                if (ptrace(PTRACE_SYSCALL, child_pid, 0, 0) < 0) {
+                    exit(1);
+                }
                 // run until next syscall is hit
                 wait(&wait_status);
-                ptrace(PTRACE_GETREGS, child_pid, NULL, &regs);
+                if (WIFEXITED(wait_status)) {
+                    break;
+                }
+                if (ptrace(PTRACE_GETREGS, child_pid, NULL, &regs) < 0) {
+                    exit(1);
+                }
             }
 
             if (regs.rip == retAddressAfterSyscalls) {
@@ -167,9 +210,7 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
         unsigned long fixAddr = retAddressAfterSyscalls - 1;
         unsigned long test = ptrace(PTRACE_PEEKTEXT, child_pid, (void *) fixAddr, 0);
 //    printf("DBG: data at 0x%x: 0x%x\n", regs.rip, test);
-        if (ptrace(PTRACE_POKETEXT, child_pid, (void *) fixAddr, (void *) data) < 0) {
-            exit(1);
-        }
+        ptrace(PTRACE_POKETEXT, child_pid, (void *) fixAddr, (void *) data);
         regs.rip -= 1;
         if (ptrace(PTRACE_SETREGS, child_pid, 0, &regs) < 0) {
             exit(1);
