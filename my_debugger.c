@@ -161,13 +161,19 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
         }
         // If we exit the loop, that means the RIP has reached out breakpoint
         // need to fix the instruction to the old one
-        ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+        if (ptrace(PTRACE_GETREGS, child_pid, 0, &regs) < 0) {
+            exit(1);
+        }
         unsigned long fixAddr = retAddressAfterSyscalls - 1;
         unsigned long test = ptrace(PTRACE_PEEKTEXT, child_pid, (void *) fixAddr, 0);
 //    printf("DBG: data at 0x%x: 0x%x\n", regs.rip, test);
-        ptrace(PTRACE_POKETEXT, child_pid, (void *) fixAddr, (void *) data);
+        if (ptrace(PTRACE_POKETEXT, child_pid, (void *) fixAddr, (void *) data) < 0) {
+            exit(1);
+        }
         regs.rip -= 1;
-        ptrace(PTRACE_SETREGS, child_pid, 0, &regs);
+        if (ptrace(PTRACE_SETREGS, child_pid, 0, &regs) < 0) {
+            exit(1);
+        }
         /* The child can continue running now */
 //    ptrace(PTRACE_CONT, child_pid, 0, 0);
         if (ptrace(PTRACE_SINGLESTEP, child_pid, 0, 0) < 0) {
