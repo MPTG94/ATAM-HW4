@@ -49,6 +49,23 @@ pid_t run_target(const char *programname, const char *args) {
     }
 }
 
+unsigned long put_breakpoint_and_get_original_instruction(pid_t child_pid, unsigned long addr) {
+    unsigned long orig_instr = ptrace(PTRACE_PEEKTEXT, child_pid, (void *) addr, 0);
+    /* Write the trap instruction 'int 3' into the address */
+    unsigned long data_trap = (orig_instr & 0xFFFFFF00) | 0xCC;
+    ptrace(PTRACE_POKETEXT, child_pid, (void *) addr, (void *) data_trap);
+    return orig_instr;
+}
+
+struct user_regs_struct remove_breakpoint_set_original_line_and_decrease_rip(pid_t child_pid, unsigned long addr, unsigned long orig_instr, struct user_regs_struct regs) {
+    ptrace(PTRACE_GETREGS, child_pid, 0, &regs);
+
+    ptrace(PTRACE_POKETEXT, child_pid, (void*) addr, (void*) orig_instr);
+    regs.rip -=1;
+    ptrace(PTRACE_SETREGS, child_pid, 0, &regs);
+    return regs;
+}
+
 void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi, int outputFile) {
     int wait_status;
     struct user_regs_struct regs;
