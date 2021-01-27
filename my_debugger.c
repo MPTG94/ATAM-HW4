@@ -22,9 +22,7 @@
 #include <fcntl.h>
 #include <stdbool.h>
 
-#define ARG_BUF 256
-
-pid_t run_target(const char *programname, const char *args) {
+pid_t run_target(char * args[]) {
     pid_t pid;
 
     pid = fork();
@@ -40,7 +38,7 @@ pid_t run_target(const char *programname, const char *args) {
         }
         /* Replace this process's image with the given program */
 //        printf("Running the program %s with args %s\n", programname, args);
-        execl(programname, args, NULL);
+        execv(args[0], args);
 
     } else {
         // fork error
@@ -123,7 +121,29 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
             }
 
             if (regs.rip == retAddressAfterSyscalls) {
-                break;
+                if (rspAtCallStart > regs.rsp) {
+                    unsigned long fixAddr = retAddressAfterSyscalls - 1;
+                    unsigned long test = ptrace(PTRACE_PEEKTEXT, child_pid, (void *) fixAddr, 0);
+                    //    printf("DBG: data at 0x%x: 0x%x\n", regs.rip, test);
+                    ptrace(PTRACE_POKETEXT, child_pid, (void *) fixAddr, (void *) data);
+                    regs.rip -= 1;
+                    if (ptrace(PTRACE_SETREGS, child_pid, 0, &regs) < 0) {
+                        exit(1);
+                    }
+                    /* The child can continue running now */
+                    //    ptrace(PTRACE_CONT, child_pid, 0, 0);
+                    if (ptrace(PTRACE_SYSCALL, child_pid, 0, 0) < 0) {
+                        exit(1);
+                    }
+                    wait(&wait_status);
+                    if (ptrace(PTRACE_GETREGS, child_pid, NULL, &regs) < 0) {
+                        exit(1);
+                    }
+                    unsigned long data_trap = (data & 0xFFFFFF00) | 0xCC;
+                    ptrace(PTRACE_POKETEXT, child_pid, (void *) fixAddr, (void *) data_trap);
+                } else {
+                    break;
+                }
             }
 
             if (regs.orig_rax == 1) {
@@ -196,7 +216,26 @@ void run_breakpoint_debugger(pid_t child_pid, unsigned long addr, int copyOrRedi
             }
 
             if (regs.rip == retAddressAfterSyscalls) {
-                break;
+                if (rspAtCallStart > regs.rsp) {
+                    unsigned long fixAddr = retAddressAfterSyscalls - 1;
+                    unsigned long test = ptrace(PTRACE_PEEKTEXT, child_pid, (void *) fixAddr, 0);
+                    //    printf("DBG: data at 0x%x: 0x%x\n", regs.rip, test);
+                    ptrace(PTRACE_POKETEXT, child_pid, (void *) fixAddr, (void *) data);
+                    regs.rip -= 1;
+                    if (ptrace(PTRACE_SETREGS, child_pid, 0, &regs) < 0) {
+                        exit(1);
+                    }
+                    /* The child can continue running now */
+                    //    ptrace(PTRACE_CONT, child_pid, 0, 0);
+                    if (ptrace(PTRACE_SINGLESTEP, child_pid, 0, 0) < 0) {
+                        exit(1);
+                    }
+                    wait(&wait_status);
+                    unsigned long data_trap = (data & 0xFFFFFF00) | 0xCC;
+                    ptrace(PTRACE_POKETEXT, child_pid, (void *) fixAddr, (void *) data_trap);
+                } else {
+                    break;
+                }
             }
         }
         if (WIFEXITED(wait_status)) {
@@ -249,20 +288,12 @@ int main(int argc, char **argv) {
 //    printf("flag is: %d", copyOrRedi);
     char *outFile = argv[3];
 
-    char args[ARG_BUF];
-    for (int i = 4; i < argc - 1; ++i) {
-        strcat(args, argv[i]);
-        strcat(args, " ");
-    }
-    strcat(args, argv[argc - 1]);
-
     int outputFile = open(outFile, O_CREAT | O_WRONLY | O_TRUNC , 0644);
     if (outputFile < 0) {
         exit(1);
     }
-//    printf("%s\n", args);
 
-    child_pid = run_target(argv[4], args);
+    child_pid = run_target(argv+4);
 
     // run specific "debugger"
     run_breakpoint_debugger(child_pid, addr, copyOrRedi, outputFile);
